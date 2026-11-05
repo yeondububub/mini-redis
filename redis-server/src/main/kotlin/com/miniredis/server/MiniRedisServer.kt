@@ -1,5 +1,8 @@
 package com.miniredis.server
 
+import com.miniredis.server.protocol.RespDecoder
+import com.miniredis.server.protocol.RespEncoder
+import com.miniredis.server.protocol.RespValue
 import java.net.ServerSocket
 import java.net.Socket
 import java.net.SocketException
@@ -48,13 +51,14 @@ class MiniRedisServer(
 
         try {
             clientSocket.use { socket ->
-                val reader = socket.getInputStream().bufferedReader(Charsets.UTF_8)
-                val writer = socket.getOutputStream().bufferedWriter(Charsets.UTF_8)
+                val input = socket.getInputStream().buffered()
+                val output = socket.getOutputStream().buffered()
 
                 while (isRunning) {
-                    val line = reader.readLine() ?: break
-                    writer.write("+$line\r\n")
-                    writer.flush()
+                    val request = RespDecoder.decode(input) ?: break
+                    val response = processRequest(request)
+                    output.write(RespEncoder.encodeToBytes(response))
+                    output.flush()
                 }
             }
         } catch (e: Exception) {
@@ -63,6 +67,30 @@ class MiniRedisServer(
             }
         } finally {
             println("[MiniRedis] 클라이언트 연결 종료: $remoteAddress")
+        }
+    }
+
+    private fun processRequest(request: RespValue): RespValue {
+        if (request !is RespValue.Array || request.elements.isEmpty()) {
+            return RespValue.Error("ERR invalid command format")
+        }
+
+        val command = request.elements[0].asString()?.uppercase()
+            ?: return RespValue.Error("ERR invalid command name")
+        val args = request.elements.drop(1).map { it.asString() ?: "" }
+
+        return when (command) {
+            "PING" -> when (args.size) {
+                0 -> RespValue.PONG
+                1 -> RespValue.BulkString(args[0])
+                else -> RespValue.Error("ERR wrong number of arguments for 'ping' command")
+            }
+            "ECHO" -> when (args.size) {
+                1 -> RespValue.BulkString(args[0])
+                else -> RespValue.Error("ERR wrong number of arguments for 'echo' command")
+            }
+            "COMMAND" -> RespValue.Array(emptyList())
+            else -> RespValue.Error("ERR unknown command '$command'")
         }
     }
 
