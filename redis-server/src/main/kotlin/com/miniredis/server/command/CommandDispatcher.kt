@@ -22,6 +22,10 @@ class CommandDispatcher(
         return when (command) {
             "PING" -> handlePing(args)
             "ECHO" -> handleEcho(args)
+            "SET" -> handleSet(args)
+            "GET" -> handleGet(args)
+            "DEL" -> handleDel(args)
+            "EXISTS" -> handleExists(args)
             "COMMAND" -> RespValue.Array(emptyList())
             else -> RespValue.Error("ERR unknown command '$command'")
         }
@@ -36,6 +40,38 @@ class CommandDispatcher(
     private fun handleEcho(args: List<String>): RespValue = when (args.size) {
         1 -> RespValue.BulkString(args[0])
         else -> RespValue.Error("ERR wrong number of arguments for 'echo' command")
+    }
+
+    private fun handleSet(args: List<String>): RespValue {
+        if (args.size != 2) {
+            return RespValue.Error("ERR wrong number of arguments for 'set' command")
+        }
+        database.set(args[0], args[1])
+        return RespValue.OK
+    }
+
+    private fun handleGet(args: List<String>): RespValue {
+        if (args.size != 1) {
+            return RespValue.Error("ERR wrong number of arguments for 'get' command")
+        }
+        val value = database.get(args[0])
+        return RespValue.BulkString(value)
+    }
+
+    private fun handleDel(args: List<String>): RespValue {
+        if (args.isEmpty()) {
+            return RespValue.Error("ERR wrong number of arguments for 'del' command")
+        }
+        val deletedCount = database.del(args)
+        return RespValue.Integer(deletedCount)
+    }
+
+    private fun handleExists(args: List<String>): RespValue {
+        if (args.isEmpty()) {
+            return RespValue.Error("ERR wrong number of arguments for 'exists' command")
+        }
+        val existingCount = database.exists(args)
+        return RespValue.Integer(existingCount)
     }
 }
 

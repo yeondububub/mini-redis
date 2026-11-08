@@ -127,6 +127,36 @@ class MiniRedisServerTest {
             }
         }
     }
+
+    @Test
+    @DisplayName("SET, GET, EXISTS, DEL 명령어로 데이터를 저장, 조회, 확인, 삭제할 수 있다")
+    fun setGetExistsDelCommands() {
+        Socket("127.0.0.1", server.boundPort).use { client ->
+            val input = client.getInputStream().buffered()
+            val output = client.getOutputStream().buffered()
+
+            fun sendCommand(vararg parts: String): RespValue? {
+                val req = RespValue.Array(parts.map { RespValue.BulkString(it) })
+                output.write(RespEncoder.encodeToBytes(req))
+                output.flush()
+                return RespDecoder.decode(input)
+            }
+
+            // 1. SET name tom -> +OK
+            assertEquals(RespValue.OK, sendCommand("SET", "name", "tom"))
+
+            // 2. GET name -> "tom", 없는 키 조회 -> NULL ($-1)
+            assertEquals(RespValue.BulkString("tom"), sendCommand("GET", "name"))
+            assertEquals(RespValue.NULL, sendCommand("GET", "unknown"))
+
+            // 3. EXISTS name unknown -> :1
+            assertEquals(RespValue.Integer(1L), sendCommand("EXISTS", "name", "unknown"))
+
+            // 4. DEL name unknown -> :1, 삭제 후 GET name -> NULL ($-1)
+            assertEquals(RespValue.Integer(1L), sendCommand("DEL", "name", "unknown"))
+            assertEquals(RespValue.NULL, sendCommand("GET", "name"))
+        }
+    }
 }
 
 
