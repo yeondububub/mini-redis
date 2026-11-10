@@ -19,6 +19,8 @@ class CommandDispatcher(
             ?: return RespValue.Error("ERR invalid command name")
         val args = request.elements.drop(1).map { it.asString() ?: "" }
 
+        println("[MiniRedis] 명령어 수신: $command ${args.joinToString(" ")}".trim())
+
         return when (command) {
             "PING" -> handlePing(args)
             "ECHO" -> handleEcho(args)
@@ -26,6 +28,16 @@ class CommandDispatcher(
             "GET" -> handleGet(args)
             "DEL" -> handleDel(args)
             "EXISTS" -> handleExists(args)
+            "DBSIZE" -> RespValue.Integer(database.size().toLong())
+            "FLUSHDB", "FLUSHALL" -> {
+                database.clear()
+                RespValue.OK
+            }
+            // --- Spring Boot (Lettuce) 및 클라이언트 초기 핸드셰이크 명령어 ---
+            "HELLO" -> RespValue.Error("NOPROTO unsupported protocol version")
+            "CLIENT" -> RespValue.OK
+            "SELECT" -> RespValue.OK
+            "INFO" -> RespValue.BulkString("# Server\r\nredis_version:7.0.0-mini-redis\r\n")
             "COMMAND" -> RespValue.Array(emptyList())
             else -> RespValue.Error("ERR unknown command '$command'")
         }
