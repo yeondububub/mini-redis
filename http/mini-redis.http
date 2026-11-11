@@ -1,0 +1,11 @@
+### ping
+GET http://localhost:8080/api/redis/ping
+
+### set value
+POST http://localhost:8080/api/redis/a?value=100
+
+### get value
+GET http://localhost:8080/api/redis/a
+
+### delete value
+DELETE http://localhost:8080/api/redis/a
