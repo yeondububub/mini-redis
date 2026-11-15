@@ -52,5 +52,29 @@ class CommandDispatcherTest {
         assertEquals(RespValue.OK, dispatcher.dispatch(commandOf("FLUSHDB")))
         assertEquals(RespValue.Integer(0L), dispatcher.dispatch(commandOf("DBSIZE")))
     }
+
+    @Test
+    @DisplayName("INCR, DECR, INCRBY, DECRBY 명령어로 숫자 값을 증감시킬 수 있다")
+    fun incrAndDecrCommands() {
+        // 없는 키에 INCR 호출 시 0 -> 1
+        assertEquals(RespValue.Integer(1L), dispatcher.dispatch(commandOf("INCR", "counter")))
+        assertEquals(RespValue.Integer(2L), dispatcher.dispatch(commandOf("INCR", "counter")))
+        assertEquals(RespValue.Integer(12L), dispatcher.dispatch(commandOf("INCRBY", "counter", "10")))
+        assertEquals(RespValue.Integer(11L), dispatcher.dispatch(commandOf("DECR", "counter")))
+        assertEquals(RespValue.Integer(6L), dispatcher.dispatch(commandOf("DECRBY", "counter", "5")))
+        assertEquals(RespValue.BulkString("6"), dispatcher.dispatch(commandOf("GET", "counter")))
+    }
+
+    @Test
+    @DisplayName("숫자가 아닌 값이 저장된 키에 INCR을 호출하면 에러를 반환한다")
+    fun incrOnNonIntegerValue() {
+        dispatcher.dispatch(commandOf("SET", "name", "ydbb"))
+
+        val response = dispatcher.dispatch(commandOf("INCR", "name"))
+        assertEquals(
+            RespValue.Error("ERR value is not an integer or out of range"),
+            response
+        )
+    }
 }
 

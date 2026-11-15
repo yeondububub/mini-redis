@@ -33,6 +33,24 @@ class RedisDatabase {
         keys.count { key -> store.containsKey(key) }.toLong()
 
     /**
+     * 지정한 키의 정수 값을 [delta]만큼 증감시키고 결과 값을 반환합니다.
+     * 키가 존재하지 않으면 0에서 시작하며, 저장된 값이 정수가 아니면 [NumberFormatException]을 던집니다.
+     */
+    fun incrBy(key: String, delta: Long): Long {
+        val currentRaw = store[key]
+        val currentValue = if (currentRaw == null) {
+            0L
+        } else {
+            currentRaw.toLongOrNull()
+                ?: throw NumberFormatException("ERR value is not an integer or out of range")
+        }
+
+        val updatedValue = Math.addExact(currentValue, delta)
+        store[key] = updatedValue.toString()
+        return updatedValue
+    }
+
+    /**
      * 저장소의 모든 데이터를 초기화합니다.
      */
     fun clear() {

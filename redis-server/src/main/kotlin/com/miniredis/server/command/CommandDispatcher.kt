@@ -28,6 +28,10 @@ class CommandDispatcher(
             "GET" -> handleGet(args)
             "DEL" -> handleDel(args)
             "EXISTS" -> handleExists(args)
+            "INCR" -> handleIncrOrDecr(command, args, 1L)
+            "DECR" -> handleIncrOrDecr(command, args, -1L)
+            "INCRBY" -> handleIncrByOrDecrBy(command, args, 1L)
+            "DECRBY" -> handleIncrByOrDecrBy(command, args, -1L)
             "DBSIZE" -> RespValue.Integer(database.size().toLong())
             "FLUSHDB", "FLUSHALL" -> {
                 database.clear()
@@ -85,5 +89,31 @@ class CommandDispatcher(
         val existingCount = database.exists(args)
         return RespValue.Integer(existingCount)
     }
+
+    private fun handleIncrOrDecr(command: String, args: List<String>, delta: Long): RespValue {
+        if (args.size != 1) {
+            return RespValue.Error("ERR wrong number of arguments for '${command.lowercase()}' command")
+        }
+        return executeIncrBy(args[0], delta)
+    }
+
+    private fun handleIncrByOrDecrBy(command: String, args: List<String>, sign: Long): RespValue {
+        if (args.size != 2) {
+            return RespValue.Error("ERR wrong number of arguments for '${command.lowercase()}' command")
+        }
+        val amount = args[1].toLongOrNull()
+            ?: return RespValue.Error("ERR value is not an integer or out of range")
+        return executeIncrBy(args[0], amount * sign)
+    }
+
+    private fun executeIncrBy(key: String, delta: Long): RespValue =
+        try {
+            val result = database.incrBy(key, delta)
+            RespValue.Integer(result)
+        } catch (e: NumberFormatException) {
+            RespValue.Error("ERR value is not an integer or out of range")
+        } catch (e: ArithmeticException) {
+            RespValue.Error("ERR increment or decrement would overflow")
+        }
 }
 
