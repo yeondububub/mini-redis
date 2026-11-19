@@ -1,12 +1,12 @@
 package com.miniredis.server.storage
 
-import java.util.concurrent.ConcurrentHashMap
-
 /**
  * Key-Value 데이터를 메모리에서 관리하는 핵심 저장소.
+ * 싱글 스레드 이벤트 루프에서 순차적으로 호출되므로 별도의 락이나 ConcurrentHashMap 없이
+ * 일반 HashMap만으로도 동시성 안전(Thread-safe)과 원자성(Atomicity)이 보장됩니다.
  */
 class RedisDatabase {
-    private val store = ConcurrentHashMap<String, String>()
+    private val store = HashMap<String, String>()
 
     /**
      * 지정한 키에 문자열 값을 저장합니다. 이미 존재하는 키라면 덮어씁니다.
