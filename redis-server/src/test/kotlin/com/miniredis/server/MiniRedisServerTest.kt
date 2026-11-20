@@ -5,6 +5,7 @@ import com.miniredis.server.protocol.RespEncoder
 import com.miniredis.server.protocol.RespValue
 import org.junit.jupiter.api.DisplayName
 import java.net.Socket
+import java.util.concurrent.CountDownLatch
 import kotlin.concurrent.thread
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
@@ -155,6 +156,58 @@ class MiniRedisServerTest {
             // 4. DEL name unknown -> :1, 삭제 후 GET name -> NULL ($-1)
             assertEquals(RespValue.Integer(1L), sendCommand("DEL", "name", "unknown"))
             assertEquals(RespValue.NULL, sendCommand("GET", "name"))
+        }
+    }
+
+    @Test
+    @DisplayName("10개의 클라이언트가 동시에 100번씩 INCR을 호출해도 싱글 스레드 이벤트 루프 덕분에 락 없이 정확히 1000이 된다")
+    fun concurrentIncrWithoutLock() {
+        val clientCount = 10
+        val incrementsPerClient = 100
+        val startGate = CountDownLatch(1)
+        val doneLatch = CountDownLatch(clientCount)
+
+        val workers = (1..clientCount).map {
+            thread(start = true) {
+                Socket("127.0.0.1", server.boundPort).use { client ->
+                    val input = client.getInputStream().buffered()
+                    val output = client.getOutputStream().buffered()
+                    val incrReqBytes = RespEncoder.encodeToBytes(
+                        RespValue.Array(
+                            RespValue.BulkString("INCR"),
+                            RespValue.BulkString("concurrent:counter")
+                        )
+                    )
+
+                    // 모든 스레드가 동시에 출발하도록 대기
+                    startGate.await()
+
+                    repeat(incrementsPerClient) {
+                        output.write(incrReqBytes)
+                        output.flush()
+                        RespDecoder.decode(input)
+                    }
+                }
+                doneLatch.countDown()
+            }
+        }
+
+        // 10개 클라이언트 동시 출발!
+        startGate.countDown()
+        doneLatch.await()
+        workers.forEach { it.join() }
+
+        Socket("127.0.0.1", server.boundPort).use { client ->
+            val input = client.getInputStream().buffered()
+            val output = client.getOutputStream().buffered()
+            val getReq = RespValue.Array(
+                RespValue.BulkString("GET"),
+                RespValue.BulkString("concurrent:counter")
+            )
+            output.write(RespEncoder.encodeToBytes(getReq))
+            output.flush()
+
+            assertEquals(RespValue.BulkString("1000"), RespDecoder.decode(input))
         }
     }
 }

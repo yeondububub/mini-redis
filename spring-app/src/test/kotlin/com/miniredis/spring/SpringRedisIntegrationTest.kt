@@ -52,6 +52,20 @@ class SpringRedisIntegrationTest {
         assertNull(redisCacheService.get(key))
     }
 
+    @Test
+    @DisplayName("StringRedisTemplate의 increment와 decrement로 카운터를 원자적으로 증감시킬 수 있다")
+    fun incrementAndDecrementWithStringRedisTemplate() {
+        val key = "article:100:views"
+        redisCacheService.delete(key)
+
+        assertEquals(1L, redisCacheService.increment(key))
+        assertEquals(2L, redisCacheService.increment(key))
+        assertEquals(12L, redisCacheService.increment(key, 10L))
+        assertEquals(11L, redisCacheService.decrement(key))
+        assertEquals(6L, redisCacheService.decrement(key, 5L))
+        assertEquals("6", redisCacheService.get(key))
+    }
+
     companion object {
         private val miniRedisServer = MiniRedisServer(port = 0)
         private var serverThread: Thread? = null
