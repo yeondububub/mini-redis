@@ -4,14 +4,18 @@ import org.junit.jupiter.api.DisplayName
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class RedisDatabaseTest {
+    private var currentTimeMillis: Long = 1_000_000L
     private lateinit var database: RedisDatabase
 
     @BeforeTest
     fun setUp() {
-        database = RedisDatabase()
+        currentTimeMillis = 1_000_000L
+        database = RedisDatabase(clock = { currentTimeMillis })
     }
 
     @Test
@@ -48,6 +52,47 @@ class RedisDatabaseTest {
 
         val existingCount = database.exists(listOf("k1", "k2", "k3"))
         assertEquals(2L, existingCount)
+    }
+
+    @Test
+    @DisplayName("키에 TTL을 설정하고 만료 시간이 지나서 조회하면 소극적 만료(Lazy Expiration)에 의해 삭제되고 null을 반환한다")
+    fun lazyExpirationOnGetAndTtl() {
+        database.set("code", "123456")
+        assertEquals(-1L, database.ttl("code")) // 만료 시간이 없는 키는 -1
+        assertEquals(-2L, database.ttl("unknown")) // 존재하지 않는 키는 -2
+
+        // 10초 만료 설정
+        assertTrue(database.expire("code", 10L))
+        assertEquals(10L, database.ttl("code"))
+        assertEquals(10_000L, database.pttl("code"))
+
+        // 5초 경과 시점: 아직 유효함
+        currentTimeMillis += 5_000L
+        assertEquals("123456", database.get("code"))
+        assertEquals(5L, database.ttl("code"))
+
+        // 추가로 5초 경과 (총 10초 경과): 만료 시점 도달!
+        currentTimeMillis += 5_000L
+        assertNull(database.get("code"))
+        assertEquals(-2L, database.ttl("code"))
+        assertEquals(0L, database.exists(listOf("code")))
+    }
+
+    @Test
+    @DisplayName("PERSIST나 일반 SET으로 덮어쓰면 기존에 설정된 TTL이 해제된다")
+    fun persistAndOverwriteClearsTtl() {
+        database.set("token", "abc", ttlMillis = 20_000L)
+        assertEquals(20L, database.ttl("token"))
+
+        // PERSIST로 만료 시간 해제
+        assertTrue(database.persist("token"))
+        assertEquals(-1L, database.ttl("token"))
+        assertFalse(database.persist("token")) // 이미 TTL이 없으므로 false
+
+        // 다시 TTL이 있는 상태로 저장 후 일반 SET으로 덮어쓰면 TTL이 사라져야 함
+        database.set("token", "abc", ttlMillis = 20_000L)
+        database.set("token", "xyz")
+        assertEquals(-1L, database.ttl("token"))
     }
 }
 

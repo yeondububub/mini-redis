@@ -5,38 +5,64 @@ package com.miniredis.server.storage
  * 싱글 스레드 이벤트 루프에서 순차적으로 호출되므로 별도의 락이나 ConcurrentHashMap 없이
  * 일반 HashMap만으로도 동시성 안전(Thread-safe)과 원자성(Atomicity)이 보장됩니다.
  */
-class RedisDatabase {
+class RedisDatabase(
+    private val clock: () -> Long = { System.currentTimeMillis() }
+) {
     private val store = HashMap<String, String>()
+    private val expires = HashMap<String, Long>()
 
     /**
      * 지정한 키에 문자열 값을 저장합니다. 이미 존재하는 키라면 덮어씁니다.
+     * [ttlMillis]가 지정되면 만료 시간을 설정하고, 지정되지 않으면 기존 만료 설정을 해제합니다.
      */
-    fun set(key: String, value: String) {
-        store[key] = value
+    fun set(key: String, value: String, ttlMillis: Long? = null) {
+        if (ttlMillis != null) {
+            if (ttlMillis <= 0L) {
+                store.remove(key)
+                expires.remove(key)
+                return
+            }
+            store[key] = value
+            expires[key] = clock() + ttlMillis
+        } else {
+            store[key] = value
+            expires.remove(key)
+        }
     }
 
     /**
-     * 지정한 키의 값을 조회합니다. 존재하지 않으면 null을 반환합니다.
+     * 지정한 키의 값을 조회합니다. 만료되었거나 존재하지 않으면 null을 반환합니다.
      */
-    fun get(key: String): String? = store[key]
+    fun get(key: String): String? {
+        purgeIfExpired(key)
+        return store[key]
+    }
 
     /**
      * 전달받은 키 목록을 삭제하고, 실제로 존재해서 삭제된 키의 개수를 반환합니다.
      */
     fun del(keys: List<String>): Long =
-        keys.count { key -> store.remove(key) != null }.toLong()
+        keys.count { key ->
+            purgeIfExpired(key)
+            expires.remove(key)
+            store.remove(key) != null
+        }.toLong()
 
     /**
      * 전달받은 키 목록 중 현재 존재하는 키의 개수를 반환합니다.
      */
     fun exists(keys: List<String>): Long =
-        keys.count { key -> store.containsKey(key) }.toLong()
+        keys.count { key ->
+            purgeIfExpired(key)
+            store.containsKey(key)
+        }.toLong()
 
     /**
      * 지정한 키의 정수 값을 [delta]만큼 증감시키고 결과 값을 반환합니다.
      * 키가 존재하지 않으면 0에서 시작하며, 저장된 값이 정수가 아니면 [NumberFormatException]을 던집니다.
      */
     fun incrBy(key: String, delta: Long): Long {
+        purgeIfExpired(key)
         val currentRaw = store[key]
         val currentValue = if (currentRaw == null) {
             0L
@@ -51,10 +77,82 @@ class RedisDatabase {
     }
 
     /**
+     * 지정한 키에 초(second) 단위의 만료 시간(TTL)을 설정합니다.
+     * 키가 존재하여 설정에 성공하면 true, 키가 없으면 false를 반환합니다.
+     */
+    fun expire(key: String, ttlSeconds: Long): Boolean =
+        pexpire(key, ttlSeconds * 1000L)
+
+    /**
+     * 지정한 키에 밀리초(millisecond) 단위의 만료 시간(TTL)을 설정합니다.
+     * 키가 존재하여 설정에 성공하면 true, 키가 없으면 false를 반환합니다.
+     */
+    fun pexpire(key: String, ttlMillis: Long): Boolean {
+        purgeIfExpired(key)
+        if (!store.containsKey(key)) return false
+
+        if (ttlMillis <= 0L) {
+            store.remove(key)
+            expires.remove(key)
+            return true
+        }
+        expires[key] = clock() + ttlMillis
+        return true
+    }
+
+    /**
+     * 지정한 키의 남은 만료 시간을 초(second) 단위로 반환합니다.
+     * - 키가 존재하지 않으면 -2
+     * - 키는 존재하지만 만료 시간이 설정되지 않았으면 -1
+     */
+    fun ttl(key: String): Long {
+        val remainingMillis = pttl(key)
+        if (remainingMillis < 0L) return remainingMillis
+        return (remainingMillis + 999L) / 1000L
+    }
+
+    /**
+     * 지정한 키의 남은 만료 시간을 밀리초(millisecond) 단위로 반환합니다.
+     * - 키가 존재하지 않으면 -2
+     * - 키는 존재하지만 만료 시간이 설정되지 않았으면 -1
+     */
+    fun pttl(key: String): Long {
+        purgeIfExpired(key)
+        if (!store.containsKey(key)) return -2L
+        val expireAt = expires[key] ?: return -1L
+        return (expireAt - clock()).coerceAtLeast(0L)
+    }
+
+    /**
+     * 지정한 키에 설정된 만료 시간(TTL)을 제거하여 영구 보존 상태로 만듭니다.
+     * 만료 시간이 실제로 제거되었으면 true, 키가 없거나 원래 만료 시간이 없었으면 false를 반환합니다.
+     */
+    fun persist(key: String): Boolean {
+        purgeIfExpired(key)
+        if (!store.containsKey(key)) return false
+        return expires.remove(key) != null
+    }
+
+    /**
+     * 소극적 만료(Lazy Expiration):
+     * 키에 접근하는 시점에 만료 시각이 지났는지 확인하고, 지났다면 즉시 메모리에서 삭제합니다.
+     */
+    private fun purgeIfExpired(key: String): Boolean {
+        val expireAt = expires[key] ?: return false
+        if (clock() >= expireAt) {
+            store.remove(key)
+            expires.remove(key)
+            return true
+        }
+        return false
+    }
+
+    /**
      * 저장소의 모든 데이터를 초기화합니다.
      */
     fun clear() {
         store.clear()
+        expires.clear()
     }
 
     /**
