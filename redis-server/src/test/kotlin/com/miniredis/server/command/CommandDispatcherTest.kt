@@ -1,6 +1,7 @@
 package com.miniredis.server.command
 
 import com.miniredis.server.protocol.RespValue
+import com.miniredis.server.storage.RedisDatabase
 import org.junit.jupiter.api.DisplayName
 import kotlin.test.BeforeTest
 import kotlin.test.Test
@@ -8,11 +9,14 @@ import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 class CommandDispatcherTest {
+    private var currentTimeMillis: Long = 1_000_000L
     private lateinit var dispatcher: CommandDispatcher
 
     @BeforeTest
     fun setUp() {
-        dispatcher = CommandDispatcher()
+        currentTimeMillis = 1_000_000L
+        val database = RedisDatabase(clock = { currentTimeMillis })
+        dispatcher = CommandDispatcher(database)
     }
 
     private fun commandOf(vararg parts: String): RespValue.Array =
@@ -75,6 +79,52 @@ class CommandDispatcherTest {
             RespValue.Error("ERR value is not an integer or out of range"),
             response
         )
+    }
+
+    @Test
+    @DisplayName("EXPIRE, PEXPIRE, TTL, PTTL, PERSIST 명령어로 키의 유효기간을 제어할 수 있다")
+    fun expireTtlAndPersistCommands() {
+        dispatcher.dispatch(commandOf("SET", "otp", "998877"))
+        assertEquals(RespValue.Integer(-1L), dispatcher.dispatch(commandOf("TTL", "otp")))
+
+        // EXPIRE otp 30 -> :1
+        assertEquals(RespValue.Integer(1L), dispatcher.dispatch(commandOf("EXPIRE", "otp", "30")))
+        assertEquals(RespValue.Integer(30L), dispatcher.dispatch(commandOf("TTL", "otp")))
+        assertEquals(RespValue.Integer(30_000L), dispatcher.dispatch(commandOf("PTTL", "otp")))
+
+        // 10초 경과
+        currentTimeMillis += 10_000L
+        assertEquals(RespValue.Integer(20L), dispatcher.dispatch(commandOf("TTL", "otp")))
+
+        // PERSIST otp -> :1 (영구 키로 전환)
+        assertEquals(RespValue.Integer(1L), dispatcher.dispatch(commandOf("PERSIST", "otp")))
+        assertEquals(RespValue.Integer(-1L), dispatcher.dispatch(commandOf("TTL", "otp")))
+
+        // PEXPIRE로 500ms 설정 후 500ms 경과 시 만료되어 GET은 NULL, TTL은 -2 반환
+        assertEquals(RespValue.Integer(1L), dispatcher.dispatch(commandOf("PEXPIRE", "otp", "500")))
+        currentTimeMillis += 500L
+        assertEquals(RespValue.NULL, dispatcher.dispatch(commandOf("GET", "otp")))
+        assertEquals(RespValue.Integer(-2L), dispatcher.dispatch(commandOf("TTL", "otp")))
+    }
+
+    @Test
+    @DisplayName("SET 명령어에 EX 또는 PX 옵션을 함께 전달하여 저장과 동시에 만료 시간을 설정할 수 있다")
+    fun setWithExAndPxOptions() {
+        assertEquals(
+            RespValue.OK,
+            dispatcher.dispatch(commandOf("SET", "session:1", "token-a", "EX", "60"))
+        )
+        assertEquals(RespValue.Integer(60L), dispatcher.dispatch(commandOf("TTL", "session:1")))
+
+        assertEquals(
+            RespValue.OK,
+            dispatcher.dispatch(commandOf("SET", "session:2", "token-b", "PX", "1500"))
+        )
+        assertEquals(RespValue.Integer(1500L), dispatcher.dispatch(commandOf("PTTL", "session:2")))
+
+        currentTimeMillis += 1500L
+        assertEquals(RespValue.NULL, dispatcher.dispatch(commandOf("GET", "session:2")))
+        assertEquals(RespValue.BulkString("token-a"), dispatcher.dispatch(commandOf("GET", "session:1")))
     }
 }
 

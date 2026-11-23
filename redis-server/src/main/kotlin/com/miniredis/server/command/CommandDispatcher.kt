@@ -25,9 +25,16 @@ class CommandDispatcher(
             "PING" -> handlePing(args)
             "ECHO" -> handleEcho(args)
             "SET" -> handleSet(args)
+            "SETEX" -> handleSetEx(command, args, isMillis = false)
+            "PSETEX" -> handleSetEx(command, args, isMillis = true)
             "GET" -> handleGet(args)
             "DEL" -> handleDel(args)
             "EXISTS" -> handleExists(args)
+            "EXPIRE" -> handleExpire(command, args, isMillis = false)
+            "PEXPIRE" -> handleExpire(command, args, isMillis = true)
+            "TTL" -> handleTtl(command, args, isMillis = false)
+            "PTTL" -> handleTtl(command, args, isMillis = true)
+            "PERSIST" -> handlePersist(args)
             "INCR" -> handleIncrOrDecr(command, args, 1L)
             "DECR" -> handleIncrOrDecr(command, args, -1L)
             "INCRBY" -> handleIncrByOrDecrBy(command, args, 1L)
@@ -59,11 +66,72 @@ class CommandDispatcher(
     }
 
     private fun handleSet(args: List<String>): RespValue {
-        if (args.size != 2) {
-            return RespValue.Error("ERR wrong number of arguments for 'set' command")
+        return when (args.size) {
+            2 -> {
+                database.set(args[0], args[1])
+                RespValue.OK
+            }
+            4 -> {
+                val option = args[2].uppercase()
+                val rawTtl = args[3].toLongOrNull()
+                    ?: return RespValue.Error("ERR value is not an integer or out of range")
+                if (rawTtl <= 0L) {
+                    return RespValue.Error("ERR invalid expire time in 'set' command")
+                }
+                val ttlMillis = when (option) {
+                    "EX" -> rawTtl * 1000L
+                    "PX" -> rawTtl
+                    else -> return RespValue.Error("ERR syntax error")
+                }
+                database.set(args[0], args[1], ttlMillis = ttlMillis)
+                RespValue.OK
+            }
+            else -> RespValue.Error("ERR wrong number of arguments for 'set' command")
         }
-        database.set(args[0], args[1])
+    }
+
+    private fun handleSetEx(command: String, args: List<String>, isMillis: Boolean): RespValue {
+        if (args.size != 3) {
+            return RespValue.Error("ERR wrong number of arguments for '${command.lowercase()}' command")
+        }
+        val rawTtl = args[1].toLongOrNull()
+            ?: return RespValue.Error("ERR value is not an integer or out of range")
+        if (rawTtl <= 0L) {
+            return RespValue.Error("ERR invalid expire time in '${command.lowercase()}' command")
+        }
+        val ttlMillis = if (isMillis) rawTtl else rawTtl * 1000L
+        database.set(args[0], args[2], ttlMillis = ttlMillis)
         return RespValue.OK
+    }
+
+    private fun handleExpire(command: String, args: List<String>, isMillis: Boolean): RespValue {
+        if (args.size != 2) {
+            return RespValue.Error("ERR wrong number of arguments for '${command.lowercase()}' command")
+        }
+        val rawTtl = args[1].toLongOrNull()
+            ?: return RespValue.Error("ERR value is not an integer or out of range")
+        val updated = if (isMillis) {
+            database.pexpire(args[0], rawTtl)
+        } else {
+            database.expire(args[0], rawTtl)
+        }
+        return RespValue.Integer(if (updated) 1L else 0L)
+    }
+
+    private fun handleTtl(command: String, args: List<String>, isMillis: Boolean): RespValue {
+        if (args.size != 1) {
+            return RespValue.Error("ERR wrong number of arguments for '${command.lowercase()}' command")
+        }
+        val remaining = if (isMillis) database.pttl(args[0]) else database.ttl(args[0])
+        return RespValue.Integer(remaining)
+    }
+
+    private fun handlePersist(args: List<String>): RespValue {
+        if (args.size != 1) {
+            return RespValue.Error("ERR wrong number of arguments for 'persist' command")
+        }
+        val persisted = database.persist(args[0])
+        return RespValue.Integer(if (persisted) 1L else 0L)
     }
 
     private fun handleGet(args: List<String>): RespValue {
