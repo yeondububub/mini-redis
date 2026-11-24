@@ -56,9 +56,19 @@ class MiniRedisServer(
     }
 
     private fun runEventLoop(sel: Selector) {
+        var lastExpireCycleMillis = System.currentTimeMillis()
+
         while (isRunning) {
             try {
-                if (sel.select(100) == 0) continue
+                val readyCount = sel.select(ACTIVE_EXPIRE_INTERVAL_MS)
+
+                val now = System.currentTimeMillis()
+                if (now - lastExpireCycleMillis >= ACTIVE_EXPIRE_INTERVAL_MS) {
+                    database.activeExpireCycle()
+                    lastExpireCycleMillis = now
+                }
+
+                if (readyCount == 0) continue
 
                 val iterator = sel.selectedKeys().iterator()
                 while (iterator.hasNext()) {
@@ -181,5 +191,6 @@ class MiniRedisServer(
     companion object {
         const val DEFAULT_PORT = 6379
         private const val BUFFER_SIZE = 8192
+        private const val ACTIVE_EXPIRE_INTERVAL_MS = 100L
     }
 }

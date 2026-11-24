@@ -94,5 +94,23 @@ class RedisDatabaseTest {
         database.set("token", "xyz")
         assertEquals(-1L, database.ttl("token"))
     }
+
+    @Test
+    @DisplayName("적극적 만료(Active Expiration) 사이클이 실행되면 조회하지 않은 만료 키들도 메모리에서 자동 삭제된다")
+    fun activeExpirationCleansUpUnusedExpiredKeys() {
+        database.set("temp:1", "v1", ttlMillis = 1_000L)
+        database.set("temp:2", "v2", ttlMillis = 1_000L)
+        database.set("permanent", "v3")
+
+        assertEquals(3, database.size())
+
+        // 1초 경과 후 아무도 GET을 호출하지 않은 상태에서 activeExpireCycle 실행
+        currentTimeMillis += 1_000L
+        val purgedCount = database.activeExpireCycle()
+
+        assertEquals(2, purgedCount)
+        assertEquals(1, database.size())
+        assertEquals("v3", database.get("permanent"))
+    }
 }
 

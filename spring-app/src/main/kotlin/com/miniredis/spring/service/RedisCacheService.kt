@@ -2,6 +2,8 @@ package com.miniredis.spring.service
 
 import org.springframework.data.redis.core.StringRedisTemplate
 import org.springframework.stereotype.Service
+import java.time.Duration
+import java.util.concurrent.TimeUnit
 
 @Service
 class RedisCacheService(
@@ -16,6 +18,16 @@ class RedisCacheService(
     fun set(key: String, value: String) {
         redisTemplate.opsForValue().set(key, value)
     }
+
+    fun setWithTtl(key: String, value: String, ttl: Duration) {
+        redisTemplate.opsForValue().set(key, value, ttl)
+    }
+
+    fun expire(key: String, ttl: Duration): Boolean =
+        redisTemplate.expire(key, ttl)
+
+    fun getExpireSeconds(key: String): Long =
+        redisTemplate.getExpire(key, TimeUnit.SECONDS)
 
     fun get(key: String): String? =
         redisTemplate.opsForValue().get(key)

@@ -9,6 +9,7 @@ import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.test.context.DynamicPropertyRegistry
 import org.springframework.test.context.DynamicPropertySource
+import java.time.Duration
 import kotlin.concurrent.thread
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -64,6 +65,20 @@ class SpringRedisIntegrationTest {
         assertEquals(11L, redisCacheService.decrement(key))
         assertEquals(6L, redisCacheService.decrement(key, 5L))
         assertEquals("6", redisCacheService.get(key))
+    }
+
+    @Test
+    @DisplayName("StringRedisTemplate으로 TTL(유효기간)이 있는 데이터를 저장하고 만료 후 자동 삭제되는 것을 확인한다")
+    fun ttlAndExpirationWithStringRedisTemplate() {
+        val key = "auth:sms:code"
+        redisCacheService.setWithTtl(key, "778899", Duration.ofMillis(300))
+
+        assertEquals("778899", redisCacheService.get(key))
+        assertTrue(redisCacheService.getExpireSeconds(key) >= 0L)
+
+        // 400ms 대기 후 만료 확인
+        Thread.sleep(400)
+        assertNull(redisCacheService.get(key))
     }
 
     companion object {

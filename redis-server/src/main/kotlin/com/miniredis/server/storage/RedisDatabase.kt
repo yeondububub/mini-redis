@@ -134,6 +134,31 @@ class RedisDatabase(
     }
 
     /**
+     * 적극적 만료(Active Expiration):
+     * 아무도 조회하지 않는 만료 키가 메모리에 계속 남는 것을 방지하기 위해,
+     * 이벤트 루프가 주기적으로(기본 100ms) 만료 설정된 키 중 최대 [sampleSize]개를 샘플링하여 삭제합니다.
+     * 실제 Redis 알고리즘과 동일하게 샘플 중 25% 이상이 만료되었다면 즉시 다음 샘플링을 반복합니다.
+     */
+    fun activeExpireCycle(sampleSize: Int = DEFAULT_EXPIRE_SAMPLE_SIZE): Int {
+        if (expires.isEmpty()) return 0
+
+        var totalPurged = 0
+        while (expires.isNotEmpty()) {
+            val sampledKeys = expires.keys.take(sampleSize)
+            if (sampledKeys.isEmpty()) break
+
+            val purgedInBatch = sampledKeys.count { key -> purgeIfExpired(key) }
+            totalPurged += purgedInBatch
+
+            // 만료된 키 비율이 25% 이하이면 이번 사이클 종료
+            if (purgedInBatch * 4 <= sampledKeys.size) {
+                break
+            }
+        }
+        return totalPurged
+    }
+
+    /**
      * 소극적 만료(Lazy Expiration):
      * 키에 접근하는 시점에 만료 시각이 지났는지 확인하고, 지났다면 즉시 메모리에서 삭제합니다.
      */
@@ -159,5 +184,9 @@ class RedisDatabase(
      * 현재 저장된 키의 전체 개수를 반환합니다.
      */
     fun size(): Int = store.size
+
+    companion object {
+        private const val DEFAULT_EXPIRE_SAMPLE_SIZE = 20
+    }
 }
 
