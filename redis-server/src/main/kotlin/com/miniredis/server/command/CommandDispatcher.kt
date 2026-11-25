@@ -2,6 +2,7 @@ package com.miniredis.server.command
 
 import com.miniredis.server.protocol.RespValue
 import com.miniredis.server.storage.RedisDatabase
+import com.miniredis.server.storage.RedisWrongTypeException
 
 /**
  * 클라이언트가 보낸 RESP 명령어 요청을 해석하고 실행하여 응답([RespValue])을 반환하는 디스패처.
@@ -21,36 +22,44 @@ class CommandDispatcher(
 
         println("[MiniRedis] 명령어 수신: $command ${args.joinToString(" ")}".trim())
 
-        return when (command) {
-            "PING" -> handlePing(args)
-            "ECHO" -> handleEcho(args)
-            "SET" -> handleSet(args)
-            "SETEX" -> handleSetEx(command, args, isMillis = false)
-            "PSETEX" -> handleSetEx(command, args, isMillis = true)
-            "GET" -> handleGet(args)
-            "DEL" -> handleDel(args)
-            "EXISTS" -> handleExists(args)
-            "EXPIRE" -> handleExpire(command, args, isMillis = false)
-            "PEXPIRE" -> handleExpire(command, args, isMillis = true)
-            "TTL" -> handleTtl(command, args, isMillis = false)
-            "PTTL" -> handleTtl(command, args, isMillis = true)
-            "PERSIST" -> handlePersist(args)
-            "INCR" -> handleIncrOrDecr(command, args, 1L)
-            "DECR" -> handleIncrOrDecr(command, args, -1L)
-            "INCRBY" -> handleIncrByOrDecrBy(command, args, 1L)
-            "DECRBY" -> handleIncrByOrDecrBy(command, args, -1L)
-            "DBSIZE" -> RespValue.Integer(database.size().toLong())
-            "FLUSHDB", "FLUSHALL" -> {
-                database.clear()
-                RespValue.OK
+        return try {
+            when (command) {
+                "PING" -> handlePing(args)
+                "ECHO" -> handleEcho(args)
+                "SET" -> handleSet(args)
+                "SETEX" -> handleSetEx(command, args, isMillis = false)
+                "PSETEX" -> handleSetEx(command, args, isMillis = true)
+                "GET" -> handleGet(args)
+                "DEL" -> handleDel(args)
+                "EXISTS" -> handleExists(args)
+                "EXPIRE" -> handleExpire(command, args, isMillis = false)
+                "PEXPIRE" -> handleExpire(command, args, isMillis = true)
+                "TTL" -> handleTtl(command, args, isMillis = false)
+                "PTTL" -> handleTtl(command, args, isMillis = true)
+                "PERSIST" -> handlePersist(args)
+                "INCR" -> handleIncrOrDecr(command, args, 1L)
+                "DECR" -> handleIncrOrDecr(command, args, -1L)
+                "INCRBY" -> handleIncrByOrDecrBy(command, args, 1L)
+                "DECRBY" -> handleIncrByOrDecrBy(command, args, -1L)
+                "HSET" -> handleHSet(args)
+                "HGET" -> handleHGet(args)
+                "HGETALL" -> handleHGetAll(args)
+                "HDEL" -> handleHDel(args)
+                "DBSIZE" -> RespValue.Integer(database.size().toLong())
+                "FLUSHDB", "FLUSHALL" -> {
+                    database.clear()
+                    RespValue.OK
+                }
+                // --- Spring Boot (Lettuce) 및 클라이언트 초기 핸드셰이크 명령어 ---
+                "HELLO" -> RespValue.Error("NOPROTO unsupported protocol version")
+                "CLIENT" -> RespValue.OK
+                "SELECT" -> RespValue.OK
+                "INFO" -> RespValue.BulkString("# Server\r\nredis_version:7.0.0-mini-redis\r\n")
+                "COMMAND" -> RespValue.Array(emptyList())
+                else -> RespValue.Error("ERR unknown command '$command'")
             }
-            // --- Spring Boot (Lettuce) 및 클라이언트 초기 핸드셰이크 명령어 ---
-            "HELLO" -> RespValue.Error("NOPROTO unsupported protocol version")
-            "CLIENT" -> RespValue.OK
-            "SELECT" -> RespValue.OK
-            "INFO" -> RespValue.BulkString("# Server\r\nredis_version:7.0.0-mini-redis\r\n")
-            "COMMAND" -> RespValue.Array(emptyList())
-            else -> RespValue.Error("ERR unknown command '$command'")
+        } catch (e: RedisWrongTypeException) {
+            RespValue.Error(e.message ?: "WRONGTYPE Operation against a key holding the wrong kind of value")
         }
     }
 
@@ -183,5 +192,43 @@ class CommandDispatcher(
         } catch (e: ArithmeticException) {
             RespValue.Error("ERR increment or decrement would overflow")
         }
+
+    private fun handleHSet(args: List<String>): RespValue {
+        if (args.size < 3 || args.size % 2 == 0) {
+            return RespValue.Error("ERR wrong number of arguments for 'hset' command")
+        }
+        val key = args[0]
+        val pairs = ArrayList<Pair<String, String>>((args.size - 1) / 2)
+        var index = 1
+        while (index < args.size) {
+            pairs.add(args[index] to args[index + 1])
+            index += 2
+        }
+        val addedCount = database.hset(key, pairs)
+        return RespValue.Integer(addedCount)
+    }
+
+    private fun handleHGet(args: List<String>): RespValue {
+        if (args.size != 2) {
+            return RespValue.Error("ERR wrong number of arguments for 'hget' command")
+        }
+        return RespValue.BulkString(database.hget(args[0], args[1]))
+    }
+
+    private fun handleHGetAll(args: List<String>): RespValue {
+        if (args.size != 1) {
+            return RespValue.Error("ERR wrong number of arguments for 'hgetall' command")
+        }
+        val flatEntries = database.hgetAll(args[0])
+        return RespValue.Array(flatEntries.map { RespValue.BulkString(it) })
+    }
+
+    private fun handleHDel(args: List<String>): RespValue {
+        if (args.size < 2) {
+            return RespValue.Error("ERR wrong number of arguments for 'hdel' command")
+        }
+        val deletedCount = database.hdel(args[0], args.drop(1))
+        return RespValue.Integer(deletedCount)
+    }
 }
 

@@ -126,5 +126,41 @@ class CommandDispatcherTest {
         assertEquals(RespValue.NULL, dispatcher.dispatch(commandOf("GET", "session:2")))
         assertEquals(RespValue.BulkString("token-a"), dispatcher.dispatch(commandOf("GET", "session:1")))
     }
+
+    @Test
+    @DisplayName("HSET, HGET, HGETALL, HDEL 명령어로 Hash 데이터를 조작하고 타입 충돌 시 WRONGTYPE 에러를 반환한다")
+    fun hashCommandsAndWrongType() {
+        assertEquals(
+            RespValue.Integer(2L),
+            dispatcher.dispatch(commandOf("HSET", "user:10", "name", "마이", "city", "도쿄"))
+        )
+        assertEquals(
+            RespValue.BulkString("마이"),
+            dispatcher.dispatch(commandOf("HGET", "user:10", "name"))
+        )
+        assertEquals(
+            RespValue.NULL,
+            dispatcher.dispatch(commandOf("HGET", "user:10", "email"))
+        )
+        assertEquals(
+            RespValue.Array(
+                RespValue.BulkString("name"),
+                RespValue.BulkString("마이"),
+                RespValue.BulkString("city"),
+                RespValue.BulkString("도쿄")
+            ),
+            dispatcher.dispatch(commandOf("HGETALL", "user:10"))
+        )
+        assertEquals(
+            RespValue.Integer(1L),
+            dispatcher.dispatch(commandOf("HDEL", "user:10", "city"))
+        )
+
+        val wrongTypeResponse = dispatcher.dispatch(commandOf("GET", "user:10"))
+        assertEquals(
+            RespValue.Error("WRONGTYPE Operation against a key holding the wrong kind of value"),
+            wrongTypeResponse
+        )
+    }
 }
 

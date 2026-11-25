@@ -4,6 +4,7 @@ import org.junit.jupiter.api.DisplayName
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -111,6 +112,41 @@ class RedisDatabaseTest {
         assertEquals(2, purgedCount)
         assertEquals(1, database.size())
         assertEquals("v3", database.get("permanent"))
+    }
+
+    @Test
+    @DisplayName("Hash 자료구조에 필드를 저장, 조회, 삭제하고 모든 필드가 삭제되면 키가 제거된다")
+    fun hashOperationsAndAutoCleanup() {
+        val added = database.hset("user:1", listOf("name" to "마이", "role" to "ADMIN"))
+        assertEquals(2L, added)
+
+        val addedOnUpdate = database.hset("user:1", listOf("role" to "SUPER_ADMIN", "age" to "20"))
+        assertEquals(1L, addedOnUpdate)
+        assertEquals("SUPER_ADMIN", database.hget("user:1", "role"))
+        assertEquals(
+            listOf("name", "마이", "role", "SUPER_ADMIN", "age", "20"),
+            database.hgetAll("user:1")
+        )
+
+        assertEquals(2L, database.hdel("user:1", listOf("name", "age", "unknown")))
+        assertEquals(1L, database.exists(listOf("user:1")))
+
+        assertEquals(1L, database.hdel("user:1", listOf("role")))
+        assertEquals(0L, database.exists(listOf("user:1")))
+    }
+
+    @Test
+    @DisplayName("서로 다른 자료구조 명령어로 같은 키에 접근하면 RedisWrongTypeException이 발생한다")
+    fun wrongTypeThrowsException() {
+        database.set("stringKey", "hello")
+        assertFailsWith<RedisWrongTypeException> {
+            database.hset("stringKey", listOf("field" to "val"))
+        }
+
+        database.hset("hashKey", listOf("field" to "val"))
+        assertFailsWith<RedisWrongTypeException> {
+            database.get("hashKey")
+        }
     }
 }
 

@@ -1,5 +1,8 @@
 package com.miniredis.server.storage
 
+class RedisWrongTypeException :
+    RuntimeException("WRONGTYPE Operation against a key holding the wrong kind of value")
+
 /**
  * Key-Value 데이터를 메모리에서 관리하는 핵심 저장소.
  * 싱글 스레드 이벤트 루프에서 순차적으로 호출되므로 별도의 락이나 ConcurrentHashMap 없이
@@ -8,11 +11,16 @@ package com.miniredis.server.storage
 class RedisDatabase(
     private val clock: () -> Long = { System.currentTimeMillis() }
 ) {
-    private val store = HashMap<String, String>()
+    private sealed interface RedisValue {
+        data class StringVal(val value: String) : RedisValue
+        data class HashVal(val fields: LinkedHashMap<String, String> = LinkedHashMap()) : RedisValue
+    }
+
+    private val store = HashMap<String, RedisValue>()
     private val expires = HashMap<String, Long>()
 
     /**
-     * 지정한 키에 문자열 값을 저장합니다. 이미 존재하는 키라면 덮어씁니다.
+     * 지정한 키에 문자열 값을 저장합니다. 이미 존재하는 키라면 타입에 관계없이 덮어씁니다.
      * [ttlMillis]가 지정되면 만료 시간을 설정하고, 지정되지 않으면 기존 만료 설정을 해제합니다.
      */
     fun set(key: String, value: String, ttlMillis: Long? = null) {
@@ -22,20 +30,24 @@ class RedisDatabase(
                 expires.remove(key)
                 return
             }
-            store[key] = value
+            store[key] = RedisValue.StringVal(value)
             expires[key] = clock() + ttlMillis
         } else {
-            store[key] = value
+            store[key] = RedisValue.StringVal(value)
             expires.remove(key)
         }
     }
 
     /**
-     * 지정한 키의 값을 조회합니다. 만료되었거나 존재하지 않으면 null을 반환합니다.
+     * 지정한 키의 문자열 값을 조회합니다. 만료되었거나 존재하지 않으면 null을 반환합니다.
      */
     fun get(key: String): String? {
         purgeIfExpired(key)
-        return store[key]
+        return when (val entry = store[key]) {
+            null -> null
+            is RedisValue.StringVal -> entry.value
+            else -> throw RedisWrongTypeException()
+        }
     }
 
     /**
@@ -63,17 +75,81 @@ class RedisDatabase(
      */
     fun incrBy(key: String, delta: Long): Long {
         purgeIfExpired(key)
-        val currentRaw = store[key]
-        val currentValue = if (currentRaw == null) {
-            0L
-        } else {
-            currentRaw.toLongOrNull()
+        val currentValue = when (val entry = store[key]) {
+            null -> 0L
+            is RedisValue.StringVal -> entry.value.toLongOrNull()
                 ?: throw NumberFormatException("ERR value is not an integer or out of range")
+            else -> throw RedisWrongTypeException()
         }
 
         val updatedValue = Math.addExact(currentValue, delta)
-        store[key] = updatedValue.toString()
+        store[key] = RedisValue.StringVal(updatedValue.toString())
         return updatedValue
+    }
+
+    /**
+     * Hash 자료구조에 하나 이상의 field-value 쌍을 저장하고, 새로 추가된 필드의 개수를 반환합니다.
+     */
+    fun hset(key: String, fieldValues: List<Pair<String, String>>): Long {
+        purgeIfExpired(key)
+        val hash = when (val entry = store[key]) {
+            null -> RedisValue.HashVal().also { store[key] = it }
+            is RedisValue.HashVal -> entry
+            else -> throw RedisWrongTypeException()
+        }
+
+        var addedCount = 0L
+        for ((field, value) in fieldValues) {
+            if (hash.fields.put(field, value) == null) {
+                addedCount++
+            }
+        }
+        return addedCount
+    }
+
+    /**
+     * Hash 자료구조에서 지정한 필드의 값을 조회합니다. 키나 필드가 없으면 null을 반환합니다.
+     */
+    fun hget(key: String, field: String): String? {
+        purgeIfExpired(key)
+        return when (val entry = store[key]) {
+            null -> null
+            is RedisValue.HashVal -> entry.fields[field]
+            else -> throw RedisWrongTypeException()
+        }
+    }
+
+    /**
+     * Hash 자료구조의 모든 필드와 값을 [field1, value1, field2, value2, ...] 형태로 반환합니다.
+     */
+    fun hgetAll(key: String): List<String> {
+        purgeIfExpired(key)
+        val entry = store[key] ?: return emptyList()
+        if (entry !is RedisValue.HashVal) throw RedisWrongTypeException()
+
+        val result = ArrayList<String>(entry.fields.size * 2)
+        for ((field, value) in entry.fields) {
+            result.add(field)
+            result.add(value)
+        }
+        return result
+    }
+
+    /**
+     * Hash 자료구조에서 지정한 필드들을 삭제하고 실제로 삭제된 필드 개수를 반환합니다.
+     * 모든 필드가 삭제되어 빈 Hash가 되면 키 자체도 함께 삭제합니다.
+     */
+    fun hdel(key: String, fields: List<String>): Long {
+        purgeIfExpired(key)
+        val entry = store[key] ?: return 0L
+        if (entry !is RedisValue.HashVal) throw RedisWrongTypeException()
+
+        val deletedCount = fields.count { field -> entry.fields.remove(field) != null }.toLong()
+        if (entry.fields.isEmpty()) {
+            store.remove(key)
+            expires.remove(key)
+        }
+        return deletedCount
     }
 
     /**
