@@ -3,6 +3,7 @@ package com.miniredis.server.command
 import com.miniredis.server.protocol.RespValue
 import com.miniredis.server.storage.RedisDatabase
 import org.junit.jupiter.api.DisplayName
+import java.io.File
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -161,6 +162,22 @@ class CommandDispatcherTest {
             RespValue.Error("WRONGTYPE Operation against a key holding the wrong kind of value"),
             wrongTypeResponse
         )
+    }
+
+    @Test
+    @DisplayName("지원하는 모든 명령어가 README.md에 문서화되어 있는지 검증한다")
+    fun allSupportedCommandsAreDocumentedInReadme() {
+        val readmeFile = listOf(File("../README.md"), File("README.md"))
+            .firstOrNull { it.exists() }
+            ?: error("README.md 파일을 찾을 수 없습니다.")
+        val readmeText = readmeFile.readText(Charsets.UTF_8)
+
+        for (command in CommandDispatcher.SUPPORTED_COMMANDS) {
+            assertTrue(
+                readmeText.contains("`$command"),
+                "README.md에 $command 명령어 설명이 누락되었습니다."
+            )
+        }
     }
 }
 

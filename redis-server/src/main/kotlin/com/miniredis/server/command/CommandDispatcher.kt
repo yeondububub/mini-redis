@@ -230,5 +230,16 @@ class CommandDispatcher(
         val deletedCount = database.hdel(args[0], args.drop(1))
         return RespValue.Integer(deletedCount)
     }
+
+    companion object {
+        val SUPPORTED_COMMANDS = setOf(
+            "PING", "ECHO", "DBSIZE", "FLUSHDB", "FLUSHALL",
+            "HELLO", "CLIENT", "SELECT", "INFO", "COMMAND",
+            "SET", "SETEX", "PSETEX", "GET", "DEL", "EXISTS",
+            "INCR", "DECR", "INCRBY", "DECRBY",
+            "EXPIRE", "PEXPIRE", "TTL", "PTTL", "PERSIST",
+            "HSET", "HGET", "HGETALL", "HDEL"
+        )
+    }
 }
 
